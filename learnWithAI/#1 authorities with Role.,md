@@ -1,0 +1,133 @@
+## Q1. 사용자 권한을 리스트로 변환해서 사용하는 이유는?
+
+# Spring Security와 쿠키 개념 정리
+
+## 목차
+1. [사용자 권한 처리](#사용자-권한-처리)
+2. [쿠키 유틸리티 클래스](#쿠키-유틸리티-클래스)
+3. [HTTP 통신과 서블릿 객체](#http-통신과-서블릿-객체)
+4. [직렬화와 자동 변환의 차이](#직렬화와-자동-변환의-차이)
+
+## 사용자 권한 처리
+
+Spring Security에서 사용자 권한을 처리하는 코드:
+
+```java
+user.getRoles().stream()
+    .map(role -> new SimpleGrantedAuthority(role.name()))
+    .collect(Collectors.toList())
+```
+
+### 코드 설명
+1. `user.getRoles()`:
+   * `User` 엔티티에서 해당 사용자에게 할당된 역할(Role) 목록을 가져옵니다.
+   * 이는 `Set<Role>` 타입으로, 사용자가 가진 모든 권한 집합입니다 (예: ROLE_USER, ROLE_ADMIN).
+   * `Role`은 일반적으로 Enum 타입으로 정의됩니다.
+
+2. `.stream()`:
+   * 역할 집합을 Java 8 스트림으로 변환합니다.
+   * 스트림을 사용하면 컬렉션 요소를 함수형 스타일로 처리할 수 있습니다.
+
+3. `.map(role -> new SimpleGrantedAuthority(role.name()))`:
+   * 스트림의 각 `Role` 요소를 Spring Security가 인식할 수 있는 `SimpleGrantedAuthority` 객체로 변환합니다.
+   * `role.name()`은 Enum의 이름을 문자열로 반환합니다 (예: "ROLE_USER").
+   * `SimpleGrantedAuthority`는 Spring Security의 `GrantedAuthority` 인터페이스 구현체로, 권한을 표현합니다.
+
+4. `.collect(Collectors.toList())`:
+   * 변환된 `SimpleGrantedAuthority` 객체들을 `List` 컬렉션으로 수집합니다.
+   * 최종적으로 `List<SimpleGrantedAuthority>` 타입의 컬렉션이 생성됩니다.
+
+### 권한을 List로 변환하는 이유
+
+1. **Spring Security 요구사항 충족**:
+   - Spring Security는 권한 정보를 `Collection<? extends GrantedAuthority>` 타입으로 요구합니다.
+   - `SimpleGrantedAuthority`는 기본 `GrantedAuthority` 구현체입니다.
+
+2. **데이터 구조 변환**:
+   - 애플리케이션에서는 권한을 Role Enum이나 엔티티로 관리합니다.
+   - Spring Security는 GrantedAuthority 인터페이스를 사용합니다.
+   - 이 두 형식 간의 변환이 필요합니다.
+
+3. **인증 객체 생성**:
+   - `UserDetails` 또는 `Authentication` 객체를 생성할 때 권한 목록이 필요합니다.
+
+### Spring Security 인증 객체
+
+#### 1. Authentication 객체
+- 현재 인증된 사용자를 나타내는 인터페이스
+- 주요 정보: principal(사용자 식별자), credentials(비밀번호), authorities(권한 목록)
+- 주요 구현체: `UsernamePasswordAuthenticationToken`, `OAuth2AuthenticationToken`, `JwtAuthenticationToken`
+
+```java
+// Authentication 객체 생성 예시
+List<GrantedAuthority> authorities = user.getRoles().stream()
+    .map(role -> new SimpleGrantedAuthority(role.name()))
+    .collect(Collectors.toList());
+
+Authentication auth = new UsernamePasswordAuthenticationToken(
+    user.getUsername(),  // principal
+    null,                // credentials (인증 후에는 보안상 null로 설정)
+    authorities          // 권한 목록
+);
+
+SecurityContextHolder.getContext().setAuthentication(auth);
+```
+
+#### 2. UserDetails 객체
+- 사용자 정보를 Spring Security에 제공하는 어댑터
+- 주요 메서드: `getUsername()`, `getPassword()`, `getAuthorities()`, `isEnabled()` 등
+
+```java
+public class CustomUserDetails implements UserDetails {
+    private final User user;
+    private final List<SimpleGrantedAuthority> authorities;
+    
+    public CustomUserDetails(User user) {
+        this.user = user;
+        this.authorities = user.getRoles().stream()
+            .map(role -> new SimpleGrantedAuthority(role.name()))
+            .collect(Collectors.toList());
+    }
+    
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return authorities;
+    }
+    
+    // 다른 메서드 구현...
+}
+```
+
+#### 3. SecurityContext와 SecurityContextHolder
+- 현재 스레드의 보안 컨텍스트 정보를 저장
+- 애플리케이션 어디서든 인증된 사용자 정보에 접근 가능
+
+```java
+// 현재 인증 사용자 접근
+Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+String username = authentication.getName();
+boolean isAdmin = authentication.getAuthorities().stream()
+    .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+```
+
+### 인증 흐름과 권한 사용
+
+1. **인증 과정**:
+   - 사용자 로그인 → UserDetailsService가 조회
+   - UserDetails 생성(권한 포함) → 비밀번호 검증
+   - 인증 성공 시 Authentication 생성 → SecurityContext에 저장
+
+2. **권한 검사**:
+   - 보호된 리소스 접근 시 AccessDecisionManager가 권한 확인
+   - 접근 규칙과 권한 목록 비교하여 허용 여부 결정
+
+3. **메서드 수준 보안**:
+```java
+@PreAuthorize("hasRole('ADMIN')")
+public void adminOnlyMethod() {
+    // ROLE_ADMIN 권한을 가진 사용자만 접근 가능
+}
+```
+
+
+
